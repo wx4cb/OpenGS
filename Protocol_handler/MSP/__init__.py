@@ -8,6 +8,26 @@ import time
 from threading import Event, Thread
 #
 
+# Standard commands
+MSP_IDENT = 100
+MSP_STATUS = 101
+MSP_RAW_IMU = 102
+MSP_SERVO = 103
+MSP_MOTOR = 104
+MSP_RC = 105
+MSP_RAW_GPS = 106
+MSP_COMP_GPS = 107
+MSP_ATTITUDE = 108
+MSP_ALTITUDE = 109
+MSP_ANALOG = 110
+MSP_GET_WP = 118
+MSP_SERVO_CONF = 120
+MSP_NAV_STATUS = 121
+MSP_CPU = 150           # NOT SURE OF CORRECT NAME FOR THIS COMMAND
+MSP_SET_RAW_RC = 200
+MSP_RESET_CONF = 208
+MSP_SET_WP = 209
+
 mappable_channels = { b'\x00' : "throttle",
         b'\x01' : "pitch",
         b'\x02' : "roll",
@@ -81,20 +101,59 @@ class MSP(object):
                     return payload
         self._controller.flushInput()
         raise RuntimeError("Controller has not responded.")
-    def get_status(self):
+
+    # SEnd an MSP Request and return payload
+    def Send_MSP_Request(self, Command):
         self._controller.flushInput()
-        self._controller.write(self.construct_payload(150)) #write the command
-        payload = self.read_payload(150) # get the payload
+        self._controller.write(self.construct_payload(Command)) #write the command
+        payload = self.read_payload(Command) # get the payload
+        return payload
+
+    # MSP_IDENT   100 FC →    
+    # VERSION UINT 8  version of MultiWii
+
+    # MULTITYPE   UINT 8  type of multi:
+    #   TRI/QUADP,QUADX,BI,GIMBAL,Y6,HEX6,FLYING_WING,Y4,HEX6X,OCTOX8, OCTOFLATP,OCTOFLATX,AIRPLANE,HELI_120,HELI_90,VTAIL4,HEX6H,SINGLECOPTER,DUALCOPTER
+    # NOTE: INAV USES QUADX FOR EVERYTHING
+    # MSP_VERSION UINT 8  not used currently
+    # capability  UINT 32 A 32 bit variable to indicate capability of FC board.
+    # Currently, BIND button is used on first bit, DYNBAL on second, FLAP on third
+    def get_ident(self):
+        payload = self.Send_MSP_Request(MSP_IDENT) # get the payload
+        values = dict()
+        values['version'] = int.from_bytes(payload[0:1], byteorder='little', signed=False) 
+        values['multi_type'] = int.from_bytes(payload[1:2], byteorder='little', signed=False) 
+        values['msp_version'] = int.from_bytes(payload[2:3], byteorder='little', signed=False) 
+        values['capability'] = int.from_bytes(payload[3:7], byteorder='little', signed=False) 
+        return values
+
+#MSP_STATUS  101 FC →    
+#cycleTime   UINT 16 unit: microseconds
+#i2c_errors_count    UINT 16 
+#sensor  UINT 16 BARO<<1|MAG<<2|GPS<<3|SONAR<<4
+#flag    UINT 32 a bit variable to indicate which BOX are active, the bit position depends on the BOX which are configured
+#global_conf.currentSet  UINT 8  to indicate the current configuration setting
+    def get_status(self):
+        payload = self.Send_MSP_Request(MSP_STATUS) # get the payload
+        values = dict()
+        values['cycletime'] = int.from_bytes(payload[0:2], byteorder='little', signed=False) 
+        values['i2c_err_count'] = int.from_bytes(payload[2:4], byteorder='little', signed=False) 
+        values['sensor'] = int.from_bytes(payload[4:6], byteorder='little', signed=False) 
+        values['flags'] = int.from_bytes(payload[6:10], byteorder='little', signed=False) 
+        values['global_conf_current_set'] = int.from_bytes(payload[10:11], byteorder='little', signed=False) 
+        return values
+
+    def get_cpu_status(self):
+        payload = self.Send_MSP_Request(MSP_MSP_CPU) # get the payload
         values = dict()
         values['cpu_load'] = int.from_bytes(payload[0:2], byteorder='little', signed=False) 
         values['arming_flags'] = int.from_bytes(payload[2:4], byteorder='little', signed=False) 
         values['calibration_axis_flags'] = int.from_bytes(payload[4:5], byteorder='little', signed=False) 
         return values
         
+    # Get RAW IMU Data
     def get_raw_imu(self):
-        self._controller.flushInput()
-        self._controller.write(self.construct_payload(102)) #write the command
-        payload = self.read_payload(102) # get the payload
+        payload = self.Send_MSP_Request(MSP_RAW_IMU) # get the payload
         values = dict()
         values['accx'] = int.from_bytes(payload[0:2], byteorder='little', signed=True) 
         values['accy'] = int.from_bytes(payload[2:4], byteorder='little', signed=True) 
@@ -107,10 +166,9 @@ class MSP(object):
         values['magz'] = int.from_bytes(payload[16:18], byteorder='little', signed=True) 
         return values
     
+    # Get Current Board Attitude
     def get_attitude(self):
-        self._controller.flushInput()
-        self._controller.write(self.construct_payload(108)) #write the command
-        payload = self.read_payload(108) # get the payload
+        payload = self.Send_MSP_Request(MSP_ATTITUDE) # get the payload
         values = dict()
         #deconstrunct the payload
         values['roll'] = int.from_bytes(payload[0:2], byteorder='little', signed=True) / 10 #make int from the first 2 bytes 
@@ -118,10 +176,9 @@ class MSP(object):
         values['yaw'] = int.from_bytes(payload[4:6], byteorder='little', signed=False)
         return values
             
+    # Get RAW GPS Data
     def get_raw_gps(self):
-        self._controller.flushInput()
-        self._controller.write(self.construct_payload(106))
-        payload = self.read_payload(106)
+        payload = self.Send_MSP_Request(MSP_RAW_GPS) # get the payload
         values = dict()
         values['fix_type'] = int.from_bytes(payload[0:1], byteorder='little', signed=False)
         values['sats'] = int.from_bytes(payload[1:2], byteorder='little', signed=False)
@@ -134,18 +191,14 @@ class MSP(object):
         return values
 
     def get_channel_map(self):
-        self._controller.flushInput()
-        self._controller.write(self.construct_payload(64))
-        payload = self.read_payload(64)
+        payload = self.Send_MSP_Request(64)
         values = []
         for i in range(len(payload)):
             values.append(mappable_channels[payload[i:i+1]])
         return  values
 
     def get_rc(self, channel_map = ["throttle","yaw","pitch","roll"]):
-        self._controller.flushInput()
-        self._controller.write(self.construct_payload(105))
-        payload = self.read_payload(105)
+        payload = self.Send_MSP_Request(MSP_RC)
         values = dict()
         types = ( #channel names
         channel_map[0],  channel_map[1],  channel_map[2],  channel_map[3],
@@ -161,8 +214,8 @@ class MSP(object):
     
     def get_wp(self, wp_number : int):
         self._controller.flushInput()
-        self._controller.write(self.construct_payload(118,wp_number.to_bytes(1, byteorder='little')))
-        payload = self.read_payload(118)
+        self._controller.write(self.construct_payload(MSP_GET_WP,wp_number.to_bytes(1, byteorder='little')))
+        payload = self.read_payload(MSP_GET_WP)
         values = dict()
         values['number'] = int.from_bytes(payload[0:1], byteorder='little', signed=False)
         values['action'] = int.from_bytes(payload[1:2], byteorder='little', signed=False)
@@ -176,9 +229,7 @@ class MSP(object):
         return values
     
     def get_analog(self):
-        self._controller.flushInput()
-        self._controller.write(self.construct_payload(110))
-        payload = self.read_payload(110)
+        payload = self.Send_MSP_Request(MSP_ANALOG)
         values = dict()
         values['battery_voltage'] = int.from_bytes(payload[0:1], byteorder='little', signed=False) #vbat
         values['mah_drawn'] = int.from_bytes(payload[1:3], byteorder='little', signed=False) #mah drawn
@@ -198,16 +249,16 @@ class MSP(object):
         payload += p1.to_bytes(2, byteorder='little')#P3
         payload += flag.to_bytes(1, byteorder='little')#P3
         self._controller.flushInput()
-        self._controller.write(self.construct_payload(209,payload)) # pass payload
-        self.read_payload(209)
+        self._controller.write(self.construct_payload(MSP_SET_WP,payload)) # pass payload
+        self.read_payload(MSP_SET_WP)
         
     def set_raw_rc(self, channels: list):
         payload = bytes()
         for channel in channels:
             payload += channel.to_bytes(2, byteorder='little')#add all channels together in one signle 'bytes' variable
         self._controller.flushInput()
-        self._controller.write(self.construct_payload(200,payload)) # pass payload
-        self.read_payload(200)
+        self._controller.write(self.construct_payload(MSPSET_RAW_RC,payload)) # pass payload
+        self.read_payload(MSP_SET_RAW_RC)
 
     def start_threaded_rc(self,refreshRate): #refreshrate in Hertz. Start sending data to MSP_RX every x seconds.
       global timer, secondsPeriod

@@ -144,7 +144,7 @@ class MSP(object):
         return values
 
     def get_cpu_status(self):
-        payload = self.Send_MSP_Request(MSP_MSP_CPU) # get the payload
+        payload = self.Send_MSP_Request(MSP_CPU) # get the payload
         values = dict()
         values['cpu_load'] = int.from_bytes(payload[0:2], byteorder='little', signed=False) 
         values['arming_flags'] = int.from_bytes(payload[2:4], byteorder='little', signed=False) 
